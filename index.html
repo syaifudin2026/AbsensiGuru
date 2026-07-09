@@ -70,6 +70,9 @@
       const getTodayString = () => new Date().toISOString().split('T')[0];
 
       function App() {
+        // --- KONFIGURASI API EXTERNAL ---
+        const API_URL = "https://script.google.com/macros/s/AKfycbyyugwykcnxEFH-bUwR9P6Ulst7dSIIZl-cpuP5DdW_raw1kdzzqxcLauZMo52yXQQ/exec";
+
         // --- STATE MANAGEMENT ---
         const [view, setView] = useState('public'); // 'public', 'guru-izin', 'admin'
         const [adminTab, setAdminTab] = useState('guru'); // 'guru', 'libur', 'izin', 'laporan'
@@ -96,8 +99,35 @@
           setTimeout(() => setToast(null), 3000);
         };
 
-        // Load dari Google Spreadsheet dengan fallback LocalStorage
+        // Load dari Google Spreadsheet dengan fallback Fetch API & LocalStorage
         useEffect(() => {
+          const fetchFromApi = async () => {
+            try {
+              const response = await fetch(API_URL + "?api=true", { redirect: 'follow' });
+              const result = await response.json();
+              if (result.status === "success" && result.data) {
+                const data = result.data;
+                setTeachers(data.teachers || []);
+                setHolidays(data.holidays || []);
+                setLeaves(data.leaves || []);
+                setAttendances(data.attendances || []);
+                setTeacherAbsences(data.teacherAbsences || []);
+                setBisyarohColumns(data.bisyarohColumns || []);
+                setBisyarohValues(data.bisyarohValues || []);
+                setBisyarohLocks(data.bisyarohLocks || []);
+                showToast("Data disinkronkan via API Eksternal!");
+              } else {
+                throw new Error(result.message || "Gagal mengambil data dari API");
+              }
+            } catch (error) {
+              console.error("API Error:", error);
+              showToast("Gagal memuat API, beralih ke data lokal.", "error");
+              loadFromLocalStorage();
+            } finally {
+              setIsLoading(false);
+            }
+          };
+
           if (typeof google !== 'undefined' && google.script && google.script.run) {
             google.script.run
               .withSuccessHandler((data) => {
@@ -114,13 +144,12 @@
               })
               .withFailureHandler((err) => {
                 showToast("Gagal memuat spreadsheet: " + err.message, "error");
-                loadFromLocalStorage();
-                setIsLoading(false);
+                fetchFromApi(); // Fallback ke API jika internal gagal
               })
               .getInitialData();
           } else {
-            loadFromLocalStorage();
-            setIsLoading(false);
+            // Jika aplikasi dibuka di luar Google Script Iframe, langsung panggil API
+            fetchFromApi();
           }
         }, []);
 
@@ -298,7 +327,7 @@
               {isLoading ? (
                 <div className="flex flex-col items-center justify-center py-20">
                   <div className="w-12 h-12 border-4 border-emerald-600 border-t-transparent rounded-full animate-spin mb-4"></div>
-                  <p className="text-gray-500 font-medium">Sinkronisasi data dengan Google Sheets...</p>
+                  <p className="text-gray-500 font-medium">Sinkronisasi data...</p>
                 </div>
               ) : (
                 <>
