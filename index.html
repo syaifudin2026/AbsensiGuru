@@ -1,4 +1,323 @@
-<!DOCTYPE html>
+// ==========================================
+// FUNGSI ROUTING UTAMA (API & WEB APP)
+// ==========================================
+function doGet(e) {
+  // 1. Cek apakah ada parameter 'api=true' di URL
+  // Berguna untuk mengambil data via fetch/Axios dari aplikasi luar (CORS diizinkan otomatis oleh GAS)
+  if (e && e.parameter && e.parameter.api === 'true') {
+    try {
+      var allData = getInitialData(); // Mengambil seluruh data dari sheet
+      var jsonResponse = {
+        status: "success",
+        message: "Data berhasil diambil",
+        data: allData
+      };
+      
+      // Membuat response JSON. 
+      // Catatan CORS: Google Apps Script menangani CORS secara otomatis 
+      // untuk ContentService. Client (frontend luar) wajib menggunakan { redirect: 'follow' } pada saat fetch.
+      var output = ContentService.createTextOutput(JSON.stringify(jsonResponse));
+      output.setMimeType(ContentService.MimeType.JSON);
+      return output;
+      
+    } catch (error) {
+      var errResponse = {
+        status: "error",
+        message: "Terjadi kesalahan: " + error.message,
+        data: null
+      };
+      var errOutput = ContentService.createTextOutput(JSON.stringify(errResponse));
+      errOutput.setMimeType(ContentService.MimeType.JSON);
+      return errOutput;
+    }
+  }
+
+  // 2. Jika tidak ada parameter api, tampilkan UI Web App (index.html)
+  // Ini memastikan UI/UX Anda tetap berjalan normal
+  return HtmlService.createHtmlOutputFromFile('index')
+    .setTitle('Absensi MI Khadijah')
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1.0');
+}
+
+// ==========================================
+// API POST (MENERIMA SIMPANAN DARI GITHUB)
+// ==========================================
+function doPost(e) {
+  try {
+    // GAS menerima POST dari fetch eksternal sebagai string
+    var postData = JSON.parse(e.postData.contents);
+    var action = postData.action;
+    var payload = postData.payload;
+    var result = false;
+
+    // Routing berdasarkan action yang dikirim dari Frontend Github
+    if (action === 'saveTeachers') result = saveTeachers(payload);
+    else if (action === 'saveHolidays') result = saveHolidays(payload);
+    else if (action === 'saveLeaves') result = saveLeaves(payload);
+    else if (action === 'saveAttendances') result = saveAttendances(payload);
+    else if (action === 'saveTeacherAbsences') result = saveTeacherAbsences(payload);
+    else if (action === 'saveBisyarohColumns') result = saveBisyarohColumns(payload);
+    else if (action === 'saveBisyarohValues') result = saveBisyarohValues(payload);
+    else if (action === 'saveBisyarohLocks') result = saveBisyarohLocks(payload);
+
+    var jsonResponse = {
+      status: result ? "success" : "error",
+      message: result ? "Data berhasil disimpan" : "Fungsi tidak ditemukan atau gagal"
+    };
+    
+    var output = ContentService.createTextOutput(JSON.stringify(jsonResponse));
+    output.setMimeType(ContentService.MimeType.JSON);
+    return output;
+    
+  } catch (error) {
+    var errResponse = {
+      status: "error",
+      message: "Terjadi kesalahan POST: " + error.message
+    };
+    var errOutput = ContentService.createTextOutput(JSON.stringify(errResponse));
+    errOutput.setMimeType(ContentService.MimeType.JSON);
+    return errOutput;
+  }
+}
+
+// ==========================================
+// KONFIGURASI NAMA SHEET DAN HEADER TABEL
+// ==========================================
+const SHEET_CONFIG = {
+  teachers: {
+    name: "Data_Guru",
+    headers: ["ID", "Nama_Guru", "JTM_Senin", "JTM_Selasa", "JTM_Rabu", "JTM_Kamis", "JTM_Jumat", "JTM_Sabtu"]
+  },
+  holidays: {
+    name: "Data_Libur",
+    headers: ["Tanggal_Libur"]
+  },
+  leaves: {
+    name: "Data_Izin",
+    headers: ["ID", "ID_Guru", "Tanggal", "Alasan"]
+  },
+  attendances: {
+    name: "Data_Absensi",
+    headers: ["ID", "Tanggal", "ID_Guru", "Data_Jam_Mengajar_JSON"]
+  },
+  teacherAbsences: {
+    name: "Data_Guru_Kosong",
+    headers: ["ID", "Tanggal", "Data_Jam_Kosong_JSON"]
+  },
+  bisyarohColumns: {
+    name: "Data_Bisyaroh_Kolom",
+    headers: ["ID", "Label", "Tipe", "Urutan"]
+  },
+  bisyarohValues: {
+    name: "Data_Bisyaroh_Nilai",
+    headers: ["ID_Guru", "ID_Kolom", "Nilai"]
+  },
+  bisyarohLocks: {
+    name: "Data_Bisyaroh_Kunci",
+    headers: ["ID_Guru", "Terkunci"]
+  }
+};
+
+// ==========================================
+// FUNGSI HELPER GOOGLE SHEETS
+// ==========================================
+
+function setupSheets() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  for (const key in SHEET_CONFIG) {
+    const config = SHEET_CONFIG[key];
+    let sheet = ss.getSheetByName(config.name);
+    
+    if (!sheet) {
+      sheet = ss.insertSheet(config.name);
+      sheet.getRange(1, 1, 1, config.headers.length).setValues([config.headers]);
+      
+      const headerRange = sheet.getRange(1, 1, 1, config.headers.length);
+      headerRange.setFontWeight("bold")
+                 .setBackground("#10b981")
+                 .setFontColor("white")
+                 .setHorizontalAlignment("center");
+                 
+      sheet.setFrozenRows(1);
+    }
+  }
+}
+
+function parseDate(value) {
+  if (!value) return '';
+  if (value instanceof Date) {
+    return Utilities.formatDate(value, Session.getScriptTimeZone(), "yyyy-MM-dd");
+  }
+  return String(value);
+}
+
+function safeParseJSON(value) {
+  try {
+    return JSON.parse(value || '[]');
+  } catch(e) {
+    return [];
+  }
+}
+
+function readSheetData(sheetName) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(sheetName);
+  if (!sheet) return [];
+  
+  const data = sheet.getDataRange().getValues();
+  if (data.length <= 1) return []; 
+  return data.slice(1); 
+}
+
+function writeSheetData(sheetName, headers, rows) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName(sheetName);
+  
+  if (!sheet) {
+    setupSheets();
+    sheet = ss.getSheetByName(sheetName);
+  }
+  
+  sheet.clearContents(); 
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  
+  if (rows && rows.length > 0) {
+    sheet.getRange(2, 1, rows.length, rows[0].length).setValues(rows);
+  }
+}
+
+// ==========================================
+// FUNGSI UTAMA APP (DIPANGGIL OLEH FRONTEND)
+// ==========================================
+
+function getInitialData() {
+  setupSheets(); 
+  
+  const teachersData = readSheetData(SHEET_CONFIG.teachers.name).map(row => ({
+    id: row[0],
+    name: row[1],
+    jtm: {
+      mon: Number(row[2]) || 0,
+      tue: Number(row[3]) || 0,
+      wed: Number(row[4]) || 0,
+      thu: Number(row[5]) || 0,
+      fri: Number(row[6]) || 0,
+      sat: Number(row[7]) || 0
+    }
+  }));
+
+  const holidaysData = readSheetData(SHEET_CONFIG.holidays.name).map(row => parseDate(row[0]));
+
+  const leavesData = readSheetData(SHEET_CONFIG.leaves.name).map(row => ({
+    id: row[0],
+    teacherId: row[1],
+    date: parseDate(row[2]),
+    reason: row[3]
+  }));
+
+  const attendancesData = readSheetData(SHEET_CONFIG.attendances.name).map(row => ({
+    id: row[0],
+    date: parseDate(row[1]),
+    teacherId: row[2],
+    hours: safeParseJSON(row[3])
+  }));
+
+  const teacherAbsencesData = readSheetData(SHEET_CONFIG.teacherAbsences.name).map(row => ({
+    id: row[0],
+    date: parseDate(row[1]),
+    hours: safeParseJSON(row[2])
+  }));
+
+  const bisyarohColumnsData = readSheetData(SHEET_CONFIG.bisyarohColumns.name)
+    .map(row => ({
+      id: row[0],
+      label: row[1],
+      type: row[2],
+      order: Number(row[3]) || 0
+    }))
+    .sort((a, b) => a.order - b.order);
+
+  const bisyarohValuesData = readSheetData(SHEET_CONFIG.bisyarohValues.name).map(row => ({
+    teacherId: row[0],
+    columnId: row[1],
+    value: Number(row[2]) || 0
+  }));
+
+  const bisyarohLocksData = readSheetData(SHEET_CONFIG.bisyarohLocks.name)
+    .filter(row => row[1] === true || String(row[1]).toUpperCase() === 'TRUE')
+    .map(row => row[0]);
+
+  return {
+    teachers: teachersData,
+    holidays: holidaysData,
+    leaves: leavesData,
+    attendances: attendancesData,
+    teacherAbsences: teacherAbsencesData,
+    bisyarohColumns: bisyarohColumnsData,
+    bisyarohValues: bisyarohValuesData,
+    bisyarohLocks: bisyarohLocksData
+  };
+}
+
+// ==========================================
+// FUNGSI PENYIMPANAN
+// ==========================================
+
+function saveTeachers(data) {
+  if (!data) return false;
+  const rows = data.map(t => [t.id, t.name, t.jtm.mon, t.jtm.tue, t.jtm.wed, t.jtm.thu, t.jtm.fri, t.jtm.sat]);
+  writeSheetData(SHEET_CONFIG.teachers.name, SHEET_CONFIG.teachers.headers, rows);
+  return true;
+}
+
+function saveHolidays(data) {
+  if (!data) return false;
+  const rows = data.map(h => [h]);
+  writeSheetData(SHEET_CONFIG.holidays.name, SHEET_CONFIG.holidays.headers, rows);
+  return true;
+}
+
+function saveLeaves(data) {
+  if (!data) return false;
+  const rows = data.map(l => [l.id, l.teacherId, l.date, l.reason]);
+  writeSheetData(SHEET_CONFIG.leaves.name, SHEET_CONFIG.leaves.headers, rows);
+  return true;
+}
+
+function saveAttendances(data) {
+  if (!data) return false;
+  const rows = data.map(a => [a.id, a.date, a.teacherId, JSON.stringify(a.hours)]);
+  writeSheetData(SHEET_CONFIG.attendances.name, SHEET_CONFIG.attendances.headers, rows);
+  return true;
+}
+
+function saveTeacherAbsences(data) {
+  if (!data) return false;
+  const rows = data.map(a => [a.id, a.date, JSON.stringify(a.hours)]);
+  writeSheetData(SHEET_CONFIG.teacherAbsences.name, SHEET_CONFIG.teacherAbsences.headers, rows);
+  return true;
+}
+
+function saveBisyarohColumns(data) {
+  if (!data) return false;
+  const rows = data.map((c, i) => [c.id, c.label, c.type, i]);
+  writeSheetData(SHEET_CONFIG.bisyarohColumns.name, SHEET_CONFIG.bisyarohColumns.headers, rows);
+  return true;
+}
+
+function saveBisyarohValues(data) {
+  if (!data) return false;
+  const rows = data.map(v => [v.teacherId, v.columnId, v.value]);
+  writeSheetData(SHEET_CONFIG.bisyarohValues.name, SHEET_CONFIG.bisyarohValues.headers, rows);
+  return true;
+}
+
+function saveBisyarohLocks(data) {
+  if (!data) return false;
+  const rows = data.map(teacherId => [teacherId, true]);
+  writeSheetData(SHEET_CONFIG.bisyarohLocks.name, SHEET_CONFIG.bisyarohLocks.headers, rows);
+  return true;
+}<!DOCTYPE html>
 <html>
   <head>
     <base target="_top">
@@ -48,6 +367,12 @@
     <script type="text/babel" data-presets="env,react">
       const { useState, useEffect, useMemo } = React;
 
+      // ==========================================
+      // KONFIGURASI API (WAJIB DIISI UNTUK GITHUB)
+      // ==========================================
+      // Masukkan URL Web App Google Apps Script Anda di sini (Pastikan di-deploy "Anyone")
+      const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyyugwykcnxEFH-bUwR9P6Ulst7dSIIZl-cpuP5DdW_raw1kdzzqxcLauZMo52yXQQ/exec"; 
+
       // --- ICONS (Inline SVG for reliability) ---
       const Icons = {
         Home: () => <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg>,
@@ -69,10 +394,25 @@
       const generateId = () => Math.random().toString(36).substr(2, 9);
       const getTodayString = () => new Date().toISOString().split('T')[0];
 
-      function App() {
-        // --- KONFIGURASI API EXTERNAL ---
-        const API_URL = "https://script.google.com/macros/s/AKfycbyyugwykcnxEFH-bUwR9P6Ulst7dSIIZl-cpuP5DdW_raw1kdzzqxcLauZMo52yXQQ/exec";
+      // Fungsi Helper untuk mengirim data backend baik di lingkungan GAS maupun Github
+      const syncDataToBackend = (actionName, dataPayload) => {
+        if (typeof google !== 'undefined' && google.script && google.script.run) {
+           // Lingkungan Google Apps Script
+           google.script.run[actionName](dataPayload);
+        } else if (GAS_WEB_APP_URL && GAS_WEB_APP_URL !== "URL_WEB_APP_ANDA_DISINI") {
+           // Lingkungan Eksternal (Github Pages)
+           fetch(GAS_WEB_APP_URL, {
+             redirect: "follow",
+             method: 'POST',
+             headers: {
+               'Content-Type': 'text/plain;charset=utf-8' // Menghindari preflight issues di GAS
+             },
+             body: JSON.stringify({ action: actionName, payload: dataPayload })
+           }).catch(err => console.error(`Error syncing ${actionName}:`, err));
+        }
+      };
 
+      function App() {
         // --- STATE MANAGEMENT ---
         const [view, setView] = useState('public'); // 'public', 'guru-izin', 'admin'
         const [adminTab, setAdminTab] = useState('guru'); // 'guru', 'libur', 'izin', 'laporan'
@@ -99,36 +439,10 @@
           setTimeout(() => setToast(null), 3000);
         };
 
-        // Load dari Google Spreadsheet dengan fallback Fetch API & LocalStorage
+        // Load dari Google Spreadsheet dengan fallback LocalStorage
         useEffect(() => {
-          const fetchFromApi = async () => {
-            try {
-              const response = await fetch(API_URL + "?api=true", { redirect: 'follow' });
-              const result = await response.json();
-              if (result.status === "success" && result.data) {
-                const data = result.data;
-                setTeachers(data.teachers || []);
-                setHolidays(data.holidays || []);
-                setLeaves(data.leaves || []);
-                setAttendances(data.attendances || []);
-                setTeacherAbsences(data.teacherAbsences || []);
-                setBisyarohColumns(data.bisyarohColumns || []);
-                setBisyarohValues(data.bisyarohValues || []);
-                setBisyarohLocks(data.bisyarohLocks || []);
-                showToast("Data disinkronkan via API Eksternal!");
-              } else {
-                throw new Error(result.message || "Gagal mengambil data dari API");
-              }
-            } catch (error) {
-              console.error("API Error:", error);
-              showToast("Gagal memuat API, beralih ke data lokal.", "error");
-              loadFromLocalStorage();
-            } finally {
-              setIsLoading(false);
-            }
-          };
-
           if (typeof google !== 'undefined' && google.script && google.script.run) {
+            // Environment: Dalam GAS Iframe
             google.script.run
               .withSuccessHandler((data) => {
                 setTeachers(data.teachers || []);
@@ -144,12 +458,39 @@
               })
               .withFailureHandler((err) => {
                 showToast("Gagal memuat spreadsheet: " + err.message, "error");
-                fetchFromApi(); // Fallback ke API jika internal gagal
+                loadFromLocalStorage();
+                setIsLoading(false);
               })
               .getInitialData();
+          } else if (GAS_WEB_APP_URL && GAS_WEB_APP_URL !== "URL_WEB_APP_ANDA_DISINI") {
+            // Environment: Github Pages / Eksternal URL
+            fetch(GAS_WEB_APP_URL + "?api=true")
+              .then(res => res.json())
+              .then(res => {
+                if(res.status === 'success') {
+                  const data = res.data;
+                  setTeachers(data.teachers || []);
+                  setHolidays(data.holidays || []);
+                  setLeaves(data.leaves || []);
+                  setAttendances(data.attendances || []);
+                  setTeacherAbsences(data.teacherAbsences || []);
+                  setBisyarohColumns(data.bisyarohColumns || []);
+                  setBisyarohValues(data.bisyarohValues || []);
+                  setBisyarohLocks(data.bisyarohLocks || []);
+                  setIsLoading(false);
+                  showToast("Data disinkronkan via API (Github mode)!");
+                }
+              })
+              .catch(err => {
+                 showToast("Gagal memuat via API. Memuat dari memori lokal.", "error");
+                 loadFromLocalStorage();
+                 setIsLoading(false);
+              });
           } else {
-            // Jika aplikasi dibuka di luar Google Script Iframe, langsung panggil API
-            fetchFromApi();
+            // Jika tidak di GAS dan URL API belum diisi
+            showToast("PERHATIAN: URL API belum dikonfigurasi. Menggunakan memori lokal.", "error");
+            loadFromLocalStorage();
+            setIsLoading(false);
           }
         }, []);
 
@@ -177,65 +518,49 @@
         useEffect(() => {
           if (isLoading) return;
           localStorage.setItem('mi_teachers', JSON.stringify(teachers));
-          if (typeof google !== 'undefined' && google.script && google.script.run) {
-            google.script.run.saveTeachers(teachers);
-          }
+          syncDataToBackend('saveTeachers', teachers);
         }, [teachers, isLoading]);
 
         useEffect(() => {
           if (isLoading) return;
           localStorage.setItem('mi_holidays', JSON.stringify(holidays));
-          if (typeof google !== 'undefined' && google.script && google.script.run) {
-            google.script.run.saveHolidays(holidays);
-          }
+          syncDataToBackend('saveHolidays', holidays);
         }, [holidays, isLoading]);
 
         useEffect(() => {
           if (isLoading) return;
           localStorage.setItem('mi_leaves', JSON.stringify(leaves));
-          if (typeof google !== 'undefined' && google.script && google.script.run) {
-            google.script.run.saveLeaves(leaves);
-          }
+          syncDataToBackend('saveLeaves', leaves);
         }, [leaves, isLoading]);
 
         useEffect(() => {
           if (isLoading) return;
           localStorage.setItem('mi_attendances', JSON.stringify(attendances));
-          if (typeof google !== 'undefined' && google.script && google.script.run) {
-            google.script.run.saveAttendances(attendances);
-          }
+          syncDataToBackend('saveAttendances', attendances);
         }, [attendances, isLoading]);
 
         useEffect(() => {
           if (isLoading) return;
           localStorage.setItem('mi_teacherAbsences', JSON.stringify(teacherAbsences));
-          if (typeof google !== 'undefined' && google.script && google.script.run) {
-            google.script.run.saveTeacherAbsences(teacherAbsences);
-          }
+          syncDataToBackend('saveTeacherAbsences', teacherAbsences);
         }, [teacherAbsences, isLoading]);
 
         useEffect(() => {
           if (isLoading) return;
           localStorage.setItem('mi_bisyarohColumns', JSON.stringify(bisyarohColumns));
-          if (typeof google !== 'undefined' && google.script && google.script.run) {
-            google.script.run.saveBisyarohColumns(bisyarohColumns);
-          }
+          syncDataToBackend('saveBisyarohColumns', bisyarohColumns);
         }, [bisyarohColumns, isLoading]);
 
         useEffect(() => {
           if (isLoading) return;
           localStorage.setItem('mi_bisyarohValues', JSON.stringify(bisyarohValues));
-          if (typeof google !== 'undefined' && google.script && google.script.run) {
-            google.script.run.saveBisyarohValues(bisyarohValues);
-          }
+          syncDataToBackend('saveBisyarohValues', bisyarohValues);
         }, [bisyarohValues, isLoading]);
 
         useEffect(() => {
           if (isLoading) return;
           localStorage.setItem('mi_bisyarohLocks', JSON.stringify(bisyarohLocks));
-          if (typeof google !== 'undefined' && google.script && google.script.run) {
-            google.script.run.saveBisyarohLocks(bisyarohLocks);
-          }
+          syncDataToBackend('saveBisyarohLocks', bisyarohLocks);
         }, [bisyarohLocks, isLoading]);
 
         const handleAdminLogin = (e) => {
@@ -327,7 +652,7 @@
               {isLoading ? (
                 <div className="flex flex-col items-center justify-center py-20">
                   <div className="w-12 h-12 border-4 border-emerald-600 border-t-transparent rounded-full animate-spin mb-4"></div>
-                  <p className="text-gray-500 font-medium">Sinkronisasi data...</p>
+                  <p className="text-gray-500 font-medium">Sinkronisasi data dengan Google Sheets...</p>
                 </div>
               ) : (
                 <>
