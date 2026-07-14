@@ -16,21 +16,50 @@
     <!-- Memuat Babel Standalone versi UMD dari cdnjs untuk menghindari masalah ES Module di iframe GAS -->
     <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.3/babel.min.js"></script>
 
-    <!-- Style khusus cetak Nota Bisyaroh (6 nota per lembar A4), tidak mempengaruhi tampilan lain -->
     <style>
       @media print {
         .nota-print-page {
           width: 100%;
-          display: grid;
-          grid-template-columns: repeat(2, 1fr);
-          grid-template-rows: repeat(3, 1fr);
-          gap: 3mm;
-          page-break-after: always;
+          display: block !important; /* Stack secara vertikal untuk pengaturan page break individu */
           box-sizing: border-box;
         }
-        .nota-print-page:last-child { page-break-after: auto; }
-        .nota-card { break-inside: avoid; }
-        @page { size: A4; margin: 8mm; }
+        .nota-card {
+          width: 100%;
+          page-break-after: always;
+          break-inside: avoid;
+          box-sizing: border-box;
+          padding: 5mm !important; /* Padding lebih rapat agar muat di ukuran A6 */
+          font-size: 10pt !important;
+          line-height: 1.2 !important;
+          border: 1px solid black !important;
+        }
+        .nota-card:last-child { 
+          page-break-after: avoid; 
+        }
+        /* Membuat padding kolom cetak jauh lebih rapat */
+        .nota-card table th, 
+        .nota-card table td {
+          padding: 1.5mm 3mm !important; /* Padding kolom super rapat */
+          font-size: 9.5pt !important;
+        }
+        /* Memperkecil margin elemen teks pendukung di nota */
+        .nota-card h2, 
+        .nota-card p {
+          margin: 0 0 1mm 0 !important;
+        }
+        .nota-card .mb-2 {
+          margin-bottom: 2mm !important;
+        }
+        .nota-card .mb-1 {
+          margin-bottom: 1mm !important;
+        }
+        .nota-card .pb-1 {
+          padding-bottom: 1mm !important;
+        }
+        @page { 
+          size: A6 portrait; /* Ukuran kertas A6 */
+          margin: 5mm; 
+        }
       }
       @media screen {
         .nota-print-page {
@@ -51,10 +80,8 @@
       // ==========================================
       // KONFIGURASI API (WAJIB DIISI UNTUK GITHUB)
       // ==========================================
-      // Masukkan URL Web App Google Apps Script Anda di sini (Pastikan di-deploy "Anyone")
       const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyyugwykcnxEFH-bUwR9P6Ulst7dSIIZl-cpuP5DdW_raw1kdzzqxcLauZMo52yXQQ/exec"; 
 
-      // --- ICONS (Inline SVG for reliability) ---
       const Icons = {
         Home: () => <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg>,
         Shield: () => <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>,
@@ -75,18 +102,15 @@
       const generateId = () => Math.random().toString(36).substr(2, 9);
       const getTodayString = () => new Date().toISOString().split('T')[0];
 
-      // Fungsi Helper untuk mengirim data backend baik di lingkungan GAS maupun Github
       const syncDataToBackend = (actionName, dataPayload) => {
         if (typeof google !== 'undefined' && google.script && google.script.run) {
-           // Lingkungan Google Apps Script
            google.script.run[actionName](dataPayload);
         } else if (GAS_WEB_APP_URL && GAS_WEB_APP_URL !== "URL_WEB_APP_ANDA_DISINI") {
-           // Lingkungan Eksternal (Github Pages)
            fetch(GAS_WEB_APP_URL, {
              redirect: "follow",
              method: 'POST',
              headers: {
-               'Content-Type': 'text/plain;charset=utf-8' // Menghindari preflight issues di GAS
+               'Content-Type': 'text/plain;charset=utf-8'
              },
              body: JSON.stringify({ action: actionName, payload: dataPayload })
            }).catch(err => console.error(`Error syncing ${actionName}:`, err));
@@ -94,21 +118,18 @@
       };
 
       function App() {
-        // --- STATE MANAGEMENT ---
-        const [view, setView] = useState('public'); // 'public', 'guru-izin', 'admin'
-        const [adminTab, setAdminTab] = useState('guru'); // 'guru', 'libur', 'izin', 'laporan'
+        const [view, setView] = useState('public'); 
+        const [adminTab, setAdminTab] = useState('guru'); 
         
-        // Data States
         const [teachers, setTeachers] = useState([]);
         const [holidays, setHolidays] = useState([]); 
         const [leaves, setLeaves] = useState([]); 
         const [attendances, setAttendances] = useState([]); 
         const [teacherAbsences, setTeacherAbsences] = useState([]);
-        const [bisyarohColumns, setBisyarohColumns] = useState([]); // [{id, label, type:'kali'|'tambah'}]
-        const [bisyarohValues, setBisyarohValues] = useState([]); // [{teacherId, columnId, value}]
-        const [bisyarohLocks, setBisyarohLocks] = useState([]); // [teacherId, ...] yang dikunci
+        const [bisyarohColumns, setBisyarohColumns] = useState([]); 
+        const [bisyarohValues, setBisyarohValues] = useState([]); 
+        const [bisyarohLocks, setBisyarohLocks] = useState([]); 
         
-        // UI & Auth States
         const [toast, setToast] = useState(null);
         const [isLoading, setIsLoading] = useState(true);
         const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
@@ -120,10 +141,8 @@
           setTimeout(() => setToast(null), 3000);
         };
 
-        // Load dari Google Spreadsheet dengan fallback LocalStorage
         useEffect(() => {
           if (typeof google !== 'undefined' && google.script && google.script.run) {
-            // Environment: Dalam GAS Iframe
             google.script.run
               .withSuccessHandler((data) => {
                 setTeachers(data.teachers || []);
@@ -144,7 +163,6 @@
               })
               .getInitialData();
           } else if (GAS_WEB_APP_URL && GAS_WEB_APP_URL !== "URL_WEB_APP_ANDA_DISINI") {
-            // Environment: Github Pages / Eksternal URL
             fetch(GAS_WEB_APP_URL + "?api=true")
               .then(res => res.json())
               .then(res => {
@@ -168,7 +186,6 @@
                  setIsLoading(false);
               });
           } else {
-            // Jika tidak di GAS dan URL API belum diisi
             showToast("PERHATIAN: URL API belum dikonfigurasi. Menggunakan memori lokal.", "error");
             loadFromLocalStorage();
             setIsLoading(false);
@@ -195,7 +212,6 @@
           if(dBisyarohLocks.length > 0) setBisyarohLocks(dBisyarohLocks);
         };
 
-        // Simpan otomatis ke Google Sheet saat data berubah
         useEffect(() => {
           if (isLoading) return;
           localStorage.setItem('mi_teachers', JSON.stringify(teachers));
@@ -270,7 +286,6 @@
           setView(newView);
         };
 
-        // --- RENDERERS ---
         return (
           <div className="min-h-screen bg-gray-50 text-gray-800 font-sans selection:bg-emerald-200">
             
@@ -452,14 +467,10 @@
         );
       }
 
-      // ==========================================
-      // 1. PUBLIC VIEW (ABSENSI GURU)
-      // ==========================================
       function PublicView({ teachers, attendances, setAttendances, holidays, leaves, showToast }) {
         const [selectedDate, setSelectedDate] = useState(getTodayString());
         const [selectedTeacher, setSelectedTeacher] = useState('');
         
-        // 9 Hours Default State
         const initialHours = Array.from({ length: 9 }, (_, i) => ({
           hour: i + 1,
           checked: false,
@@ -482,7 +493,6 @@
         const isTeacherOnLeave = !!leaveInfo;
         const leaveReason = leaveInfo ? leaveInfo.reason : '';
 
-        // Reset form ketika tanggal berubah
         useEffect(() => {
           setHoursData(Array.from({ length: 9 }, (_, i) => ({
             hour: i + 1, checked: false, className: '', subId: ''
@@ -525,7 +535,6 @@
           const validHours = hoursData.filter(h => h.checked);
           if (validHours.length === 0) return showToast('Pilih minimal 1 jam pelajaran!', 'error');
           
-          // Validasi: Kelas dan Guru yang digantikan Wajib Diisi
           for (const item of validHours) {
              if (!item.className || !item.subId) {
                 return showToast(`Lengkapi pilihan kelas dan guru yang digantikan untuk Jam ke-${item.hour}`, 'error');
@@ -533,7 +542,6 @@
           }
 
           for (const item of validHours) {
-            // Validasi duplikasi jam mengajar yang sama di kelas yang sama oleh guru lain
             const clashAttendance = attendances.find(att => {
               if (att.date === selectedDate && String(att.teacherId) !== String(selectedTeacher)) {
                 return att.hours.some(h => h.hour === item.hour && h.className === item.className);
@@ -546,18 +554,13 @@
               return showToast(`Jam ke-${item.hour} di Kelas ${item.className} sudah diisi oleh ${otherTeacherName}!`, 'error');
             }
 
-            // --- TAMBAHAN KONDISI ---
-            // Validasi: Nama guru yang hadir tidak dapat mengisi di jam yang sama di kelas berbeda
-            // Mencegah perubahan kelas pada jam yang sudah pernah di-submit hari ini oleh guru tersebut
             const existingRecord = attendances.find(a => String(a.teacherId) === String(selectedTeacher) && a.date === selectedDate);
             if (existingRecord) {
               const existingHour = existingRecord.hours.find(h => h.hour === item.hour);
-              // Jika jam ini sudah pernah disimpan dan user mencoba mengganti dengan kelas berbeda, maka tolak
               if (existingHour && existingHour.className !== item.className) {
                 return showToast(`Gagal! Anda sudah terdata mengajar Jam ke-${item.hour} di Kelas ${existingHour.className}. Tidak dapat mengisi di kelas berbeda pada jam yang sama!`, 'error');
               }
             }
-            // ------------------------
           }
 
           const newAttendance = {
@@ -671,10 +674,7 @@
                                 >
                                   <option value="">- Guru yang digantikan -</option>
                                   {teachers.filter(t => {
-                                    // Exclude guru yang sedang hadir (mengisi form ini)
                                     if (String(t.id) === String(selectedTeacher)) return false;
-                                    // Exclude guru yang sudah dijadikan pengganti di JAM YANG SAMA (h.hour)
-                                    // oleh guru hadir lain pada hari yang sama di data attendances tersimpan
                                     const alreadySubbedAtThisHour = attendances.some(att =>
                                       att.date === selectedDate &&
                                       String(att.teacherId) !== String(selectedTeacher) &&
@@ -711,12 +711,8 @@
         );
       }
 
-      // ==========================================
-      // 1B. PUBLIC VIEW: GURU IZIN (JAM KOSONG)
-      // ==========================================
       function GuruIzinView({ teachers, teacherAbsences, setTeacherAbsences, holidays, showToast }) {
         const [selectedDate, setSelectedDate] = useState(getTodayString());
-        
         const [hoursData, setHoursData] = useState([]);
 
         const dateObj = new Date(selectedDate);
@@ -726,7 +722,6 @@
           return holidays.includes(selectedDate);
         }, [selectedDate, holidays]);
 
-        // Reset form completely (empty checkboxes) when date changes
         useEffect(() => {
           setHoursData(Array.from({ length: 9 }, (_, i) => ({
             hour: i + 1,
@@ -762,8 +757,6 @@
           if (validHours.length === 0) return showToast('Pilih minimal 1 jam pelajaran!', 'error');
           
           const existingAbsencesForDate = teacherAbsences.filter(a => a.date === selectedDate);
-          
-          // Kumpulkan semua record jam yang sudah pernah tersimpan di tanggal yang dipilih
           const allExistingHours = [];
           existingAbsencesForDate.forEach(record => {
             record.hours.forEach(h => {
@@ -776,9 +769,6 @@
                 return showToast(`Lengkapi pilihan kelas dan guru yang tidak hadir pada Jam ke-${item.hour}`, 'error');
             }
             
-            // --- VALIDASI TAMBAHAN ---
-            
-            // 1. Kondisi: Di jam yang sama dan kelas yang sama sudah pernah diinput (meskipun nama gurunya berbeda)
             const classClash = allExistingHours.find(h => 
                 h.hour === item.hour && 
                 h.className === item.className
@@ -788,7 +778,6 @@
                 return showToast(`Gagal! Jam ke-${item.hour} di Kelas ${item.className} sudah diinput izin atas nama ${clashedTeacher}.`, 'error');
             }
 
-            // 2. Kondisi: Di jam yang sama, guru yang sama diinput di kelas yang berbeda
             const teacherClash = allExistingHours.find(h => 
                 h.hour === item.hour && 
                 String(h.missingTeacherId) === String(item.missingTeacherId)
@@ -805,11 +794,9 @@
             hours: validHours.map(({hour, className, missingTeacherId}) => ({hour, className, missingTeacherId}))
           };
 
-          // Simpan dengan menambahkan data baru (tidak menimpa record tanggal yang sama)
           setTeacherAbsences([...teacherAbsences, newAbsenceRecord]);
           showToast('Data guru tidak hadir berhasil disimpan!');
           
-          // Kosongkan form kembali setelah berhasil dikirim agar siap diisi ulang
           setHoursData(Array.from({ length: 9 }, (_, i) => ({
             hour: i + 1,
             checked: false,
@@ -905,9 +892,6 @@
         );
       }
 
-      // ==========================================
-      // 2. ADMIN: MANAGE TEACHERS
-      // ==========================================
       function ManageTeachers({ teachers, setTeachers, showToast }) {
         const [name, setName] = useState('');
         const [jtm, setJtm] = useState({ mon: 0, tue: 0, wed: 0, thu: 0, fri: 0, sat: 0 });
@@ -1036,9 +1020,6 @@
         );
       }
 
-      // ==========================================
-      // 3. ADMIN: MANAGE HOLIDAYS
-      // ==========================================
       function ManageHolidays({ holidays, setHolidays, showToast }) {
         const [date, setDate] = useState('');
 
@@ -1090,9 +1071,6 @@
         );
       }
 
-      // ==========================================
-      // 4. ADMIN: MANAGE LEAVES (IZIN)
-      // ==========================================
       function ManageLeaves({ leaves, setLeaves, teachers, showToast }) {
         const [teacherId, setTeacherId] = useState('');
         const [date, setDate] = useState('');
@@ -1107,7 +1085,6 @@
           showToast('Izin berhasil dicatat.');
         };
 
-        // Mengubah ke String() agar perbandingan ID lebih aman untuk data dari API
         const getTeacherName = (id) => teachers.find(t => String(t.id) === String(id))?.name || 'Unknown';
 
         return (
@@ -1156,9 +1133,6 @@
         );
       }
 
-      // ==========================================
-      // 5. ADMIN: BISYAROH / GAJI
-      // ==========================================
       function BisyarohView({ teachers, holidays, leaves, attendances, teacherAbsences, bisyarohColumns, setBisyarohColumns, bisyarohValues, setBisyarohValues, bisyarohLocks, setBisyarohLocks, showToast }) {
         const [startDate, setStartDate] = useState(() => {
           const d = new Date(); d.setDate(1); return d.toISOString().split('T')[0];
@@ -1167,9 +1141,9 @@
         const [newColLabel, setNewColLabel] = useState('');
         const [newColType, setNewColType] = useState('kali');
         const [showPrint, setShowPrint] = useState(false);
-        const [unlockModal, setUnlockModal] = useState(null); // { teacherId, teacherName }
+        const [unlockModal, setUnlockModal] = useState(null); 
 
-        // Hitung Sisa JTM Akhir tiap guru pada periode terpilih (logika sama dengan Laporan)
+        // Hitung Sisa JTM Akhir tiap guru pada periode terpilih
         const jtmStats = useMemo(() => {
           if (!startDate || !endDate) return {};
           const dayMap = { 1: 'mon', 2: 'tue', 3: 'wed', 4: 'thu', 5: 'fri', 6: 'sat' };
@@ -1221,13 +1195,11 @@
           return result;
         }, [startDate, endDate, teachers, holidays, attendances, teacherAbsences]);
 
-        // Helper ambil nilai input kolom milik guru tertentu
         const getValue = (teacherId, colId) => {
           const found = bisyarohValues.find(v => String(v.teacherId) === String(teacherId) && String(v.columnId) === String(colId));
           return found ? found.value : 0;
         };
 
-        // Helper status kunci per guru
         const isLocked = (teacherId) => bisyarohLocks.some(id => String(id) === String(teacherId));
 
         const toggleLock = (teacherId) => {
@@ -1278,7 +1250,6 @@
           setBisyarohValues(bisyarohValues.filter(v => String(v.columnId) !== String(colId)));
         };
 
-        // Hitung total bisyaroh tiap guru berdasarkan kolom pedoman
         const computeTotal = (teacherId) => {
           const finalJTM = jtmStats[teacherId] ? jtmStats[teacherId].finalJTM : 0;
           return bisyarohColumns.reduce((sum, col) => {
@@ -1290,12 +1261,10 @@
 
         const formatRupiah = (num) => 'Rp ' + Math.round(num || 0).toLocaleString('id-ID');
 
-        // Total akhir bisyaroh seluruh guru pada periode terpilih
         const grandTotal = useMemo(() => {
           return teachers.reduce((sum, t) => sum + computeTotal(t.id), 0);
         }, [teachers, bisyarohColumns, bisyarohValues, jtmStats]);
 
-        // Pecah daftar guru jadi kelompok 6 untuk cetak nota per lembar A4
         const teacherChunks = useMemo(() => {
           const chunks = [];
           for (let i = 0; i < teachers.length; i += 6) {
@@ -1328,7 +1297,6 @@
             {unlockModal && (
               <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{background:'rgba(0,0,0,0.45)'}}>
                 <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-bounce-in">
-                  {/* Header strip */}
                   <div className="bg-amber-400 px-6 py-4 flex items-center gap-3">
                     <div className="bg-white rounded-full p-2 shadow">
                       <svg className="w-6 h-6 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1340,13 +1308,11 @@
                       <p className="text-amber-800 text-xs opacity-80">Konfirmasi diperlukan</p>
                     </div>
                   </div>
-                  {/* Body */}
                   <div className="px-6 py-5">
                     <p className="text-gray-700 text-sm mb-1">Anda akan membuka kunci baris:</p>
                     <p className="font-bold text-emerald-800 text-base mb-3 bg-emerald-50 px-3 py-2 rounded-lg border border-emerald-200">👤 {unlockModal.teacherName}</p>
                     <p className="text-gray-500 text-xs leading-relaxed">Setelah dibuka, nilai bisyaroh pada baris ini <span className="font-semibold text-amber-700">dapat diubah kembali</span>. Pastikan perubahan sudah sesuai sebelum mengunci lagi.</p>
                   </div>
-                  {/* Footer buttons */}
                   <div className="px-6 pb-5 flex gap-3">
                     <button
                       onClick={() => setUnlockModal(null)}
@@ -1384,7 +1350,6 @@
               </div>
             </div>
 
-            {/* Pengaturan Kolom Pedoman Gaji (Hidden on Print) */}
             <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 print:hidden">
               <h3 className="font-bold text-gray-800 mb-4">Kolom Pedoman Perhitungan Gaji</h3>
               <form onSubmit={handleAddColumn} className="flex flex-col sm:flex-row gap-3 items-end mb-4">
@@ -1418,7 +1383,6 @@
               )}
             </div>
 
-            {/* Tabel Input Nilai per Guru (Hidden on Print) */}
             <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 overflow-x-auto print:hidden">
               <h3 className="font-bold text-gray-800 mb-4">Tabel Perhitungan Bisyaroh per Guru &mdash; Periode {periodeLabel}</h3>
               <table className="w-full border-collapse text-sm min-w-max">
@@ -1488,7 +1452,8 @@
               )}
             </div>
 
-            {/* Area Cetak Nota: 6 nota per lembar A4 */}
+            {}
+            {/* Area Cetak Nota: Telah dimodifikasi agar rapat dan pas ukuran cetak A6 per nota */}
             {showPrint && (
               <div className="nota-print-area">
                 {teacherChunks.map((chunk, pageIdx) => (
@@ -1521,8 +1486,9 @@
                               const amount = col.type === 'kali' ? val * finalJTM : val;
                               return (
                                 <tr key={col.id}>
+                                  {/* Diperbarui: Menyembunyikan nilai perkalian tarif perjam sesuai instruksi */}
                                   <td className="border border-black p-1">
-                                    {col.label}{col.type === 'kali' ? ` (${val} × ${finalJTM})` : ''}
+                                    {col.label}
                                   </td>
                                   <td className="border border-black p-1 text-right">{formatRupiah(amount)}</td>
                                 </tr>
@@ -1558,9 +1524,6 @@
         );
       }
 
-      // ==========================================
-      // 6. ADMIN: REPORTS (CETAK LAPORAN)
-      // ==========================================
       function ReportView({ teachers, holidays, leaves, attendances, teacherAbsences }) {
         const [startDate, setStartDate] = useState(() => {
           const d = new Date(); d.setDate(1); return d.toISOString().split('T')[0];
@@ -1572,7 +1535,6 @@
           
           const start = new Date(startDate);
           const end = new Date(endDate);
-          
           const dayMap = { 1: 'mon', 2: 'tue', 3: 'wed', 4: 'thu', 5: 'fri', 6: 'sat' };
 
           const stats = {};
@@ -1596,7 +1558,6 @@
             currentDay.setDate(currentDay.getDate() + 1);
           }
           
-          // Kalkulasi Substitusi (Pengganti)
           attendances.forEach(att => {
             if (att.date >= startDate && att.date <= endDate) {
               att.hours.forEach(hour => {
@@ -1608,7 +1569,6 @@
             }
           });
 
-          // Kalkulasi Guru Izin/Kosong (Dari Form Baru)
           teacherAbsences.forEach(abs => {
             if (abs.date >= startDate && abs.date <= endDate) {
               abs.hours.forEach(hour => {
@@ -1622,7 +1582,6 @@
           const leaveRecaps = leaves
             .filter(l => l.date >= startDate && l.date <= endDate)
             .map(l => ({
-              // Mengubah ke String() agar aman
               name: teachers.find(t=>String(t.id)===String(l.teacherId))?.name || 'Unknown',
               date: l.date,
               reason: l.reason
@@ -1630,7 +1589,6 @@
 
           const finalTable1 = Object.values(stats).map(s => ({
             ...s,
-            // Perhitungan: JTM Normal - (Digantikan + Tidak Hadir Kosong) + Menggantikan
             finalJTM: s.baseJTM - s.subbedMinus - s.absentMinus + s.subbingPlus
           }));
 
@@ -1644,7 +1602,6 @@
 
         return (
           <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-            {/* Controls (Hidden on Print) */}
             <div className="print:hidden border-b pb-6 mb-6">
               <h3 className="font-bold text-gray-800 mb-4">Pengaturan Cetak Laporan</h3>
               <div className="flex flex-col sm:flex-row gap-4 items-end">
@@ -1662,17 +1619,14 @@
               </div>
             </div>
 
-            {/* Printable Area */}
             {reportData && (
               <div className="print-area font-serif text-sm">
-                {/* Header */}
                 <div className="text-center mb-8 border-b-2 border-black pb-4">
                   <h2 className="text-xl font-bold uppercase tracking-wider">Laporan Kehadiran Guru</h2>
                   <h1 className="text-2xl font-bold uppercase tracking-wider text-emerald-900">MI KHADIJAH</h1>
                   <p className="text-gray-600 mt-1">Periode: {new Date(startDate).toLocaleDateString('id-ID')} s/d {new Date(endDate).toLocaleDateString('id-ID')}</p>
                 </div>
 
-                {/* Table 1: Rekap Utama */}
                 <div className="mb-8 break-inside-avoid">
                   <h3 className="font-bold text-lg mb-3 bg-gray-100 p-2 border-l-4 border-emerald-600">1. Rekapitulasi Jam Tugas Mengajar (JTM)</h3>
                   <table className="w-full border-collapse border border-black text-center text-xs">
@@ -1703,7 +1657,6 @@
                   </table>
                 </div>
 
-                {/* Table 2: Rekap Izin */}
                 <div className="break-inside-avoid">
                   <h3 className="font-bold text-lg mb-3 bg-gray-100 p-2 border-l-4 border-emerald-600">2. Rekapitulasi Izin Guru Harian</h3>
                   <table className="w-full border-collapse border border-black text-left">
@@ -1742,7 +1695,6 @@
         );
       }
 
-      // Render App ke elemen root
       const root = ReactDOM.createRoot(document.getElementById('root'));
       root.render(<App />);
     </script>
