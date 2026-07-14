@@ -1215,28 +1215,30 @@
           return found ? found.value : 0;
         };
 
-        const isLocked = (teacherId) => bisyarohLocks.some(id => String(id) === String(teacherId));
+        // Diubah: Memeriksa lock berdasarkan colId (ID Kolom)
+        const isLocked = (colId) => bisyarohLocks.some(id => String(id) === String(colId));
 
-        const toggleLock = (teacherId) => {
-          if (isLocked(teacherId)) {
-            const teacher = teachers.find(t => String(t.id) === String(teacherId));
-            setUnlockModal({ teacherId, teacherName: teacher ? teacher.name : 'Guru ini' });
+        // Diubah: Mengunci atau membuka kunci kolom
+        const toggleLock = (colId) => {
+          if (isLocked(colId)) {
+            const col = bisyarohColumns.find(c => String(c.id) === String(colId));
+            setUnlockModal({ columnId: colId, columnLabel: col ? col.label : 'Kolom ini' });
           } else {
-            setBisyarohLocks([...bisyarohLocks, teacherId]);
-            showToast('✅ Baris dikunci, nilai tidak bisa diubah tanpa sengaja.');
+            setBisyarohLocks([...bisyarohLocks, colId]);
+            showToast('✅ Kolom dikunci, nilai tidak bisa diubah tanpa sengaja.');
           }
         };
 
         const confirmUnlock = () => {
           if (!unlockModal) return;
-          setBisyarohLocks(bisyarohLocks.filter(id => String(id) !== String(unlockModal.teacherId)));
+          setBisyarohLocks(bisyarohLocks.filter(id => String(id) !== String(unlockModal.columnId)));
           showToast('🔓 Kunci dibuka, nilai bisa diubah kembali.');
           setUnlockModal(null);
         };
 
         const handleValueChange = (teacherId, colId, value) => {
-          if (isLocked(teacherId)) {
-            showToast('Baris guru ini terkunci. Buka kunci terlebih dahulu untuk mengubah nilai.', 'error');
+          if (isLocked(colId)) {
+            showToast('Kolom ini terkunci. Buka kunci terlebih dahulu untuk mengubah nilai.', 'error');
             return;
           }
           const num = parseFloat(value) || 0;
@@ -1282,7 +1284,6 @@
 
         const teacherChunks = useMemo(() => {
           const chunks = [];
-          // DIUBAH: Membagi data guru menjadi per 4 (bukan per 6) agar pas cetak 4 nota dalam 1 A4 (2x2)
           for (let i = 0; i < teachers.length; i += 4) {
             chunks.push(teachers.slice(i, i + 4));
           }
@@ -1318,14 +1319,14 @@
                       </svg>
                     </div>
                     <div>
-                      <p className="text-amber-900 font-bold text-base leading-tight">Buka Kunci Bisyaroh</p>
+                      <p className="text-amber-900 font-bold text-base leading-tight">Buka Kunci Kolom</p>
                       <p className="text-amber-800 text-xs opacity-80">Konfirmasi diperlukan</p>
                     </div>
                   </div>
                   <div className="px-6 py-5">
-                    <p className="text-gray-700 text-sm mb-1">Anda akan membuka kunci baris:</p>
-                    <p className="font-bold text-emerald-800 text-base mb-3 bg-emerald-50 px-3 py-2 rounded-lg border border-emerald-200">👤 {unlockModal.teacherName}</p>
-                    <p className="text-gray-500 text-xs leading-relaxed">Setelah dibuka, nilai bisyaroh pada baris ini <span className="font-semibold text-amber-700">dapat diubah kembali</span>.</p>
+                    <p className="text-gray-700 text-sm mb-1">Anda akan membuka kunci untuk kolom:</p>
+                    <p className="font-bold text-emerald-800 text-base mb-3 bg-emerald-50 px-3 py-2 rounded-lg border border-emerald-200">📊 {unlockModal.columnLabel}</p>
+                    <p className="text-gray-500 text-xs leading-relaxed">Setelah dibuka, nilai pada kolom ini <span className="font-semibold text-amber-700">dapat diubah kembali</span>.</p>
                   </div>
                   <div className="px-6 pb-5 flex gap-3">
                     <button
@@ -1402,61 +1403,64 @@
                   <tr className="bg-gray-100">
                     <th className="border p-2 text-left">Nama Guru</th>
                     <th className="border p-2 w-28">Sisa JTM Akhir</th>
+                    {/* Header kolom dinamis sekarang menampilkan tombol kunci (lock) */}
                     {bisyarohColumns.map(col => (
-                      <th key={col.id} className="border p-2 w-36">{col.label} <span className="text-[10px] text-gray-500 block">{col.type === 'kali' ? '(nilai × JTM)' : '(nominal tetap)'}</span></th>
+                      <th key={col.id} className="border p-2 w-48">
+                        <div className="flex justify-between items-start gap-2">
+                          <div>
+                            {col.label} <span className="text-[10px] text-gray-500 block">{col.type === 'kali' ? '(nilai × JTM)' : '(nominal tetap)'}</span>
+                          </div>
+                          <button
+                            onClick={() => toggleLock(col.id)}
+                            title={isLocked(col.id) ? 'Buka kunci kolom ini' : 'Kunci kolom ini'}
+                            className={`inline-flex flex-shrink-0 items-center justify-center p-1.5 rounded-md transition-colors ${isLocked(col.id) ? 'bg-red-100 text-red-600 hover:bg-red-200' : 'bg-gray-200 text-gray-500 hover:bg-gray-300'}`}
+                          >
+                            {isLocked(col.id) ? <Icons.Lock /> : <Icons.Unlock />}
+                          </button>
+                        </div>
+                      </th>
                     ))}
                     <th className="border p-2 w-32 bg-emerald-50">Total Bisyaroh</th>
-                    <th className="border p-2 w-20 text-center">Kunci</th>
                   </tr>
                 </thead>
                 <tbody>
                   {teachers.length === 0 && (
-                    <tr><td colSpan={4 + bisyarohColumns.length} className="border p-4 text-center text-gray-400">Belum ada data guru.</td></tr>
+                    <tr><td colSpan={3 + bisyarohColumns.length} className="border p-4 text-center text-gray-400">Belum ada data guru.</td></tr>
                   )}
-                  {teachers.map(t => {
-                    const locked = isLocked(t.id);
-                    return (
-                    <tr key={t.id} className={locked ? 'bg-gray-50' : ''}>
+                  {teachers.map(t => (
+                    <tr key={t.id} className="hover:bg-gray-50">
                       <td className="border p-2 font-medium text-emerald-900">{t.name}</td>
                       <td className="border p-2 text-center font-semibold">{jtmStats[t.id] ? jtmStats[t.id].finalJTM : 0}</td>
-                      {bisyarohColumns.map(col => (
-                        <td key={col.id} className="border p-1">
-                          <input
-                            type="number"
-                            value={getValue(t.id, col.id) || ''}
-                            onChange={e => handleValueChange(t.id, col.id, e.target.value)}
-                            disabled={locked}
-                            className={`w-full border rounded p-1.5 text-right ${locked ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : ''}`}
-                            placeholder="0"
-                          />
-                        </td>
-                      ))}
+                      {bisyarohColumns.map(col => {
+                        const locked = isLocked(col.id);
+                        return (
+                          <td key={col.id} className="border p-1">
+                            <input
+                              type="number"
+                              value={getValue(t.id, col.id) || ''}
+                              onChange={e => handleValueChange(t.id, col.id, e.target.value)}
+                              disabled={locked}
+                              className={`w-full border rounded p-1.5 text-right ${locked ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'focus:ring-emerald-500 focus:border-emerald-500'}`}
+                              placeholder="0"
+                            />
+                          </td>
+                        );
+                      })}
                       <td className="border p-2 text-right font-bold bg-emerald-50">{formatRupiah(computeTotal(t.id))}</td>
-                      <td className="border p-2 text-center">
-                        <button
-                          onClick={() => toggleLock(t.id)}
-                          title={locked ? 'Buka kunci baris ini' : 'Kunci baris ini'}
-                          className={`inline-flex items-center justify-center p-1.5 rounded-md ${locked ? 'bg-red-100 text-red-600 hover:bg-red-200' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
-                        >
-                          {locked ? <Icons.Lock /> : <Icons.Unlock />}
-                        </button>
-                      </td>
                     </tr>
-                  )})}
+                  ))}
                 </tbody>
                 {teachers.length > 0 && (
                   <tfoot>
                     <tr className="bg-emerald-100">
                       <td className="border p-2 font-bold text-emerald-900" colSpan={2 + bisyarohColumns.length}>TOTAL AKHIR BISYAROH SELURUH GURU</td>
                       <td className="border p-2 text-right font-bold text-emerald-900">{formatRupiah(grandTotal)}</td>
-                      <td className="border p-2"></td>
                     </tr>
                   </tfoot>
                 )}
               </table>
             </div>
 
-            {}
             {showPrint && (
               <div className="nota-print-area">
                 {teacherChunks.map((chunk, pageIdx) => (
@@ -1490,7 +1494,6 @@
                                 const amount = col.type === 'kali' ? val * finalJTM : val;
                                 return (
                                   <tr key={col.id}>
-                                    {/* DIUBAH: Menyembunyikan teks perkalian nilai tarif seperti (4000 x 0) sesuai instruksi */}
                                     <td className="border border-black p-1 text-left">
                                       {col.label}
                                     </td>
