@@ -31,8 +31,13 @@
           overflow: visible !important;
         }
         /* Menghapus header/footer bawaan browser saat cetak jika memungkinkan */
+        /* PERBAIKAN: Ukuran kertas diubah ke F4 (215mm x 330mm) sesuai kertas fisik yang dipakai untuk mencetak.
+           Sebelumnya diset ke A4, sehingga saat dicetak ke kertas F4 ukuran halaman CSS tidak sama dengan
+           ukuran kertas fisik. Ini membuat tinggi tiap halaman (dihitung lewat 100vh) meleset sedikit demi
+           sedikit di tiap halaman berikutnya, sehingga pada data guru yang banyak (banyak halaman), kartu nota
+           di halaman-halaman belakang terpotong / hilang. */
         @page { 
-          size: A4 portrait; 
+          size: 215mm 330mm; /* Ukuran kertas F4 */
           margin: 0; 
         }
         .nota-print-area {
@@ -40,10 +45,11 @@
           width: 100% !important;
           height: auto !important;
         }
-        /* Kontainer halaman cetak: Mengatur ukuran pas A4 Portrait */
+        /* Kontainer halaman cetak: Mengatur ukuran pas F4 Portrait */
         .nota-print-page {
-          width: 100%;
-          height: 100vh; /* PERBAIKAN: 100vh pada media print setara dengan 1 halaman penuh A4 */
+          width: 215mm;
+          height: 330mm; /* PERBAIKAN: Tinggi ditetapkan dalam mm (bukan 100vh) agar presisi & konsisten
+                             di setiap halaman cetak, tidak peduli berapa banyak halaman yang dihasilkan. */
           padding: 10mm;
           display: grid;
           grid-template-columns: repeat(2, 1fr);
@@ -54,6 +60,7 @@
           break-after: page;
           break-inside: avoid;
           box-sizing: border-box;
+          overflow: hidden;
         }
         .nota-print-page:last-child { 
           page-break-after: auto; 
